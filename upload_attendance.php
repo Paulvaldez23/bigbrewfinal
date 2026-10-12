@@ -232,10 +232,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 continue;
                             }
 
-                            $hoursWorked = calculate_hours_worked($tin, $tout);
-                            $ins = $conn->prepare("INSERT INTO attendance (employee_id, attendance_date, time_in, time_out, hours_worked, source) VALUES (?, ?, ?, ?, ?, 'biometric') ON DUPLICATE KEY UPDATE time_in=COALESCE(VALUES(time_in), time_in), time_out=COALESCE(VALUES(time_out), time_out), hours_worked=COALESCE(VALUES(hours_worked), hours_worked)");
-                            $ins->execute([$empDbId, $date, $tin, $tout, $hoursWorked]);
-                            $imported++;
+                            // Intelligent multi-machine punch merge (collect all punches and pair earliest IN with latest OUT)
+                            $checkStmt = $conn->prepare("SELECT id, time_in, time_out FROM attendance WHERE employee_id = ? AND attendance_date = ? LIMIT 1");
+                            $checkStmt->execute([$empDbId, $date]);
+                            $existing = $checkStmt->fetch();
+
+                            if ($existing) {
+                                $existingIn = $existing['time_in'] ?: null;
+                                $existingOut = $existing['time_out'] ?: null;
+
+                                // Collect all distinct punches across both files / machines
+                                $allPunches = array_values(array_unique(array_filter([$existingIn, $existingOut, $tin, $tout])));
+                                sort($allPunches);
+
+                                if (count($allPunches) >= 2) {
+                                    $finalIn = $allPunches[0];
+                                    $finalOut = end($allPunches);
+                                } elseif (count($allPunches) === 1) {
+                                    $finalIn = $allPunches[0];
+                                    $finalOut = null;
+                                } else {
+                                    $finalIn = null;
+                                    $finalOut = null;
+                                }
+
+                                $finalHours = calculate_hours_worked($finalIn, $finalOut);
+
+                                $upd = $conn->prepare("UPDATE attendance SET time_in = ?, time_out = ?, hours_worked = ?, source = 'biometric' WHERE id = ?");
+                                $upd->execute([$finalIn, $finalOut, $finalHours, $existing['id']]);
+                                $imported++;
+                            } else {
+                                $hoursWorked = calculate_hours_worked($tin, $tout);
+                                $ins = $conn->prepare("INSERT INTO attendance (employee_id, attendance_date, time_in, time_out, hours_worked, source) VALUES (?, ?, ?, ?, ?, 'biometric')");
+                                $ins->execute([$empDbId, $date, $tin, $tout, $hoursWorked]);
+                                $imported++;
+                            }
                         } catch (Exception $e) {
                             $failed++;
                         }

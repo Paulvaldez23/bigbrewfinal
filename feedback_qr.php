@@ -8,7 +8,14 @@ $active_nav = 'qr';
 
 $branches = ['Branch 1', 'Branch 2', 'Branch 3', 'Head Office'];
 $qrData = null;
-$feedbackUrl = 'http://localhost/bigbrewfinal/feedback_form.php';
+if (!empty($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'localhost') === false) {
+    // Live hosting (e.g. bigbrew.infy.click)
+    $feedbackUrl = 'https://' . $_SERVER['HTTP_HOST'] . '/feedback_form.php';
+} else {
+    // Local development
+    $feedbackUrl = 'http://localhost/bigbrewfinal/feedback_form.php';
+}
+
 if (!empty($_GET['branch'])) {
     $qrData = $feedbackUrl . '?branch=' . urlencode($_GET['branch']);
 }

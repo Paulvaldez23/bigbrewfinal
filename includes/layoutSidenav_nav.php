@@ -9,6 +9,12 @@ $nav_active = function($key) use ($active_nav) { return $active_nav === $key ? '
 ?>
     <div id="wrapper">
         <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+            <div class="d-flex align-items-center justify-content-between px-3 pt-2 pb-1 d-md-none" style="border-bottom:1px solid rgba(255,255,255,0.12);">
+                <span class="small font-weight-bold text-uppercase" style="color:#ffe7c7;letter-spacing:.1em;font-size:.7rem;">Menu</span>
+                <button type="button" class="btn btn-sm text-white" onclick="$('body').removeClass('mobile-sidebar-open');$('#accordionSidebar').removeClass('mobile-show');" style="background:rgba(0,0,0,0.2);border:0;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
             <a class="sidebar-brand d-flex align-items-center justify-content-center" href="index.php" style="padding: .9rem .5rem;">
                 <div class="sidebar-brand-icon mr-2" style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;">
                     <?php bigbrew_logo_img(48, true); ?>
