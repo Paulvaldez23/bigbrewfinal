@@ -92,12 +92,12 @@ function resolve_on_duty_staff($conn, $branchName) {
 
         // Known default shift hours
         $shiftTimes = [
-            'morning'   => ['s' => 600,  'e' => 1400, 'label' => 'Morning Shift'],
-            'opening'   => ['s' => 600,  'e' => 1400, 'label' => 'Morning Shift'],
-            'afternoon' => ['s' => 1400, 'e' => 2200, 'label' => 'Afternoon Shift'],
-            'mid'       => ['s' => 1400, 'e' => 2200, 'label' => 'Afternoon Shift'],
-            'night'     => ['s' => 2200, 'e' => 600,  'label' => 'Night Shift'],
-            'closing'   => ['s' => 2200, 'e' => 600,  'label' => 'Night Shift'],
+            'morning'   => ['s' => 1000, 'e' => 1900, 'label' => 'Morning Shift'],
+            'opening'   => ['s' => 1000, 'e' => 1900, 'label' => 'Morning Shift'],
+            'afternoon' => ['s' => 1200, 'e' => 2100, 'label' => 'Afternoon Shift'],
+            'mid'       => ['s' => 1200, 'e' => 2100, 'label' => 'Afternoon Shift'],
+            'night'     => ['s' => 1400, 'e' => 2300, 'label' => 'Night Shift'],
+            'closing'   => ['s' => 1400, 'e' => 2300, 'label' => 'Night Shift'],
         ];
 
         // Query shifts table to get exact configured hours

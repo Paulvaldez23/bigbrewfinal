@@ -110,9 +110,9 @@ if ($conn && !empty($records)) {
                         $so = !empty($cr['shift_out']) ? (int)str_replace(':', '', substr($cr['shift_out'], 0, 5)) : null;
                         $sr = strtolower(trim($cr['shift_row']));
                         if ($si === null) {
-                            if (strpos($sr, 'morn') !== false || strpos($sr, 'open') !== false) { $si = 600; $so = 1400; }
-                            elseif (strpos($sr, 'after') !== false || strpos($sr, 'mid') !== false) { $si = 1400; $so = 2200; }
-                            elseif (strpos($sr, 'night') !== false || strpos($sr, 'clos') !== false) { $si = 2200; $so = 600; }
+                            if (strpos($sr, 'morn') !== false || strpos($sr, 'open') !== false) { $si = 1000; $so = 1900; }
+                            elseif (strpos($sr, 'after') !== false || strpos($sr, 'mid') !== false) { $si = 1200; $so = 2100; }
+                            elseif (strpos($sr, 'night') !== false || strpos($sr, 'clos') !== false) { $si = 1400; $so = 2300; }
                         }
                         $on = false;
                         $isOvernight = ($so !== null && $si !== null && $so <= $si);

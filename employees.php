@@ -147,16 +147,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'delete' && $conn) {
+        $empId = (int)($_POST['id'] ?? 0);
         try {
             $conn->beginTransaction();
-            $conn->prepare("DELETE FROM admin_users WHERE employee_id = ?")->execute([$_POST['id']]);
-            $conn->prepare("DELETE FROM employees WHERE id = ?")->execute([$_POST['id']]);
+
+            // Fetch employee name for clean alert message
+            $empStmt = $conn->prepare("SELECT first_name, last_name, employee_id FROM employees WHERE id = ? LIMIT 1");
+            $empStmt->execute([$empId]);
+            $empInfo = $empStmt->fetch(PDO::FETCH_ASSOC);
+            $empName = $empInfo ? ($empInfo['first_name'] . ' ' . $empInfo['last_name']) : "Employee #{$empId}";
+
+            // Safety check: Prevent deleting currently logged-in account
+            if (isset($_SESSION['employee_id']) && (int)$_SESSION['employee_id'] === $empId) {
+                throw new Exception("Hindi mo maaaring i-delete ang sarili mong account habang ikaw ay kasalukuyang naka-login.");
+            }
+            $chkAdmin = $conn->prepare("SELECT id FROM admin_users WHERE employee_id = ?");
+            $chkAdmin->execute([$empId]);
+            $linkedAdminIds = $chkAdmin->fetchAll(PDO::FETCH_COLUMN);
+            if (isset($_SESSION['user_id']) && in_array($_SESSION['user_id'], $linkedAdminIds)) {
+                throw new Exception("Hindi mo maaaring i-delete ang sarili mong admin login habang ikaw ay kasalukuyang naka-login.");
+            }
+
+            // 1. Delete associated attendance and requests
+            $conn->prepare("DELETE FROM attendance_requests WHERE employee_id = ?")->execute([$empId]);
+            $conn->prepare("DELETE FROM attendance WHERE employee_id = ?")->execute([$empId]);
+
+            // 2. Delete payroll records and notifications
+            $conn->prepare("DELETE FROM payroll_records WHERE employee_id = ?")->execute([$empId]);
+            $conn->prepare("DELETE FROM payroll_notifications WHERE employee_id = ?")->execute([$empId]);
+
+            // 3. Delete shifts, schedules, and notifications
+            $conn->prepare("DELETE FROM shift_notifications WHERE employee_id = ?")->execute([$empId]);
+            $conn->prepare("DELETE FROM schedule_requests WHERE employee_id = ?")->execute([$empId]);
+            $conn->prepare("DELETE FROM employee_shifts WHERE employee_id = ?")->execute([$empId]);
+
+            // 4. Preserve feedback by setting employee references to NULL
+            $conn->prepare("UPDATE feedback SET employee_id = NULL WHERE employee_id = ?")->execute([$empId]);
+            $conn->prepare("UPDATE feedback SET on_shift_employee_id = NULL WHERE on_shift_employee_id = ?")->execute([$empId]);
+
+            // 5. Clean up admin user audit references
+            foreach ($linkedAdminIds as $aid) {
+                $conn->prepare("UPDATE biometric_upload_logs SET uploaded_by = NULL WHERE uploaded_by = ?")->execute([$aid]);
+                $conn->prepare("UPDATE shift_weeks SET published_by = NULL WHERE published_by = ?")->execute([$aid]);
+                $conn->prepare("DELETE FROM shift_notifications WHERE admin_user_id = ?")->execute([$aid]);
+            }
+
+            // 6. Delete login account
+            $conn->prepare("DELETE FROM admin_users WHERE employee_id = ?")->execute([$empId]);
+
+            // 7. Delete employee record
+            $conn->prepare("DELETE FROM employees WHERE id = ?")->execute([$empId]);
+
             $conn->commit();
-            $message = 'Employee and linked login (if any) deleted.';
+            $message = 'Employee <strong>' . htmlspecialchars($empName) . '</strong> and all linked records were successfully deleted.';
             $messageType = 'success';
         } catch (Exception $e) {
             if ($conn->inTransaction()) $conn->rollBack();
-            $message = 'Error: ' . $e->getMessage();
+            $message = 'Error deleting employee: ' . $e->getMessage();
             $messageType = 'danger';
         }
     }
@@ -231,11 +278,13 @@ require 'includes/layoutSidenav_nav.php';
                                     data-toggle="modal" data-target="#editModal">
                                     <i class="fas fa-edit mr-1"></i>Edit
                                 </button>
-                                <form method="POST" onsubmit="return confirm('Delete employee and their login account?')" style="display:inline-block;">
-                                    <input type="hidden" name="action" value="delete">
-                                    <input type="hidden" name="id" value="<?php echo $e['id']; ?>">
-                                    <button class="btn btn-sm btn-danger" title="Delete employee + login"><i class="fas fa-trash"></i></button>
-                                </form>
+                                <button type="button" class="btn btn-sm btn-danger btn-delete-emp"
+                                    data-id="<?php echo $e['id']; ?>"
+                                    data-name="<?php echo htmlspecialchars($e['first_name'] . ' ' . $e['last_name']); ?>"
+                                    data-code="<?php echo htmlspecialchars($e['employee_id']); ?>"
+                                    title="Delete employee">
+                                    <i class="fas fa-trash"></i>
+                                </button>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -380,6 +429,72 @@ require 'includes/layoutSidenav_nav.php';
 </div></div>
 </div>
 
+<!-- Modal: Delete Employee Confirmation -->
+<div class="modal fade" id="deleteEmployeeModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content border-0 shadow-lg">
+            <form method="POST">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" id="deleteEmpId">
+                <div class="modal-header bg-danger text-white py-3">
+                    <h5 class="modal-title font-weight-bold">
+                        <i class="fas fa-exclamation-triangle mr-2"></i>Delete Employee Confirmation
+                    </h5>
+                    <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="alert alert-warning mb-3">
+                        <i class="fas fa-exclamation-circle mr-1"></i>
+                        Sigurado ka ba na nais mong i-delete ang empleyadong ito?
+                    </div>
+                    <div class="p-3 bg-light rounded border mb-3">
+                        <div class="row mb-1">
+                            <div class="col-sm-4 text-muted small font-weight-bold">Employee Name:</div>
+                            <div class="col-sm-8 font-weight-bold text-gray-900" id="deleteEmpName">-</div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-4 text-muted small font-weight-bold">Employee ID:</div>
+                            <div class="col-sm-8 text-primary font-weight-bold" id="deleteEmpCode">-</div>
+                        </div>
+                    </div>
+                    <div class="card border-left-danger shadow-sm mb-0">
+                        <div class="card-body py-2 px-3">
+                            <div class="text-danger small">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                <strong>Paalala:</strong> Mabubura rin ang lahat ng kaugnay na records ng empleyadong ito tulad ng <strong>Attendance, Shift Schedules, Payroll Records,</strong> at <strong>Staff Login Account</strong>. Hindi na ito maibabalik kapag na-delete.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger font-weight-bold px-4">
+                        <i class="fas fa-trash mr-1"></i>Yes, Delete Employee
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <?php
 require 'includes/footer.php';
 require 'includes/footercdn.php';
+?>
+
+<script>
+$(document).on('click', '.btn-delete-emp', function() {
+    var btn = $(this);
+    var id = btn.data('id');
+    var name = btn.data('name');
+    var code = btn.data('code');
+
+    $('#deleteEmpId').val(id);
+    $('#deleteEmpName').text(name);
+    $('#deleteEmpCode').text(code || 'N/A');
+
+    $('#deleteEmployeeModal').modal('show');
+});
+</script>

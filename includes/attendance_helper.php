@@ -675,6 +675,13 @@ function calculate_hours_worked($time_in, $time_out) {
         $diff = $out_dt->getTimestamp() - $in_dt->getTimestamp();
         if ($diff < 0) return null;
         $hours = $diff / 3600;
+
+        // Big Brew shift duration is 9 hours with a 1-hour unpaid lunch break.
+        // For shifts of 5 hours or more, deduct 1 hour for lunch break.
+        if ($hours >= 5.0) {
+            $hours = max(0, $hours - 1.0);
+        }
+
         return round($hours, 2);
     } catch (Throwable $e) { return null; }
 }

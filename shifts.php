@@ -110,10 +110,10 @@ if ($conn) {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         $chk = $conn->query("SELECT COUNT(*) FROM shifts")->fetchColumn();
         if (!$chk) {
-            $conn->exec("INSERT INTO shifts (shift_name, start_time, end_time, color) VALUES
-                ('Opening','06:00:00','14:00:00','#1cc88a'),
-                ('Mid','10:00:00','18:00:00','#36b9cc'),
-                ('Closing','14:00:00','22:00:00','#858796')");
+            $conn->exec("INSERT INTO shifts (shift_name, start_time, end_time, color, description) VALUES
+                ('Morning Shift','10:00:00','19:00:00','#1cc88a','10:00 AM - 7:00 PM'),
+                ('Afternoon Shift','12:00:00','21:00:00','#36b9cc','12:00 PM - 9:00 PM'),
+                ('Night Shift','14:00:00','23:00:00','#858796','2:00 PM - 11:00 PM')");
         }
     } catch (Exception $e) {}
 }
@@ -134,9 +134,9 @@ foreach ($shiftRows as $s) {
 $shiftRows = $deduped;
 if (!$shiftRows) {
     $shiftRows = [
-        ['id'=>0,'shift_name'=>'Opening','start_time'=>'06:00:00','end_time'=>'14:00:00','color'=>'#1cc88a'],
-        ['id'=>0,'shift_name'=>'Mid','start_time'=>'10:00:00','end_time'=>'18:00:00','color'=>'#36b9cc'],
-        ['id'=>0,'shift_name'=>'Closing','start_time'=>'14:00:00','end_time'=>'22:00:00','color'=>'#858796'],
+        ['id'=>0,'shift_name'=>'Morning Shift','start_time'=>'10:00:00','end_time'=>'19:00:00','color'=>'#1cc88a'],
+        ['id'=>0,'shift_name'=>'Afternoon Shift','start_time'=>'12:00:00','end_time'=>'21:00:00','color'=>'#36b9cc'],
+        ['id'=>0,'shift_name'=>'Night Shift','start_time'=>'14:00:00','end_time'=>'23:00:00','color'=>'#858796'],
     ];
 }
 

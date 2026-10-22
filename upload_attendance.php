@@ -257,14 +257,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 }
 
                                 $finalHours = calculate_hours_worked($finalIn, $finalOut);
+                                $regH = $finalHours !== null ? min((float)$finalHours, 8.0) : null;
 
-                                $upd = $conn->prepare("UPDATE attendance SET time_in = ?, time_out = ?, hours_worked = ?, source = 'biometric' WHERE id = ?");
-                                $upd->execute([$finalIn, $finalOut, $finalHours, $existing['id']]);
+                                $upd = $conn->prepare("UPDATE attendance SET time_in = ?, time_out = ?, hours_worked = ?, regular_hours = ?, source = 'biometric' WHERE id = ?");
+                                $upd->execute([$finalIn, $finalOut, $finalHours, $regH, $existing['id']]);
                                 $imported++;
                             } else {
                                 $hoursWorked = calculate_hours_worked($tin, $tout);
-                                $ins = $conn->prepare("INSERT INTO attendance (employee_id, attendance_date, time_in, time_out, hours_worked, source) VALUES (?, ?, ?, ?, ?, 'biometric')");
-                                $ins->execute([$empDbId, $date, $tin, $tout, $hoursWorked]);
+                                $regH = $hoursWorked !== null ? min((float)$hoursWorked, 8.0) : null;
+                                $ins = $conn->prepare("INSERT INTO attendance (employee_id, attendance_date, time_in, time_out, hours_worked, regular_hours, source) VALUES (?, ?, ?, ?, ?, ?, 'biometric')");
+                                $ins->execute([$empDbId, $date, $tin, $tout, $hoursWorked, $regH]);
                                 $imported++;
                             }
                         } catch (Exception $e) {

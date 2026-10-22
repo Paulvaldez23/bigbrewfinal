@@ -6,6 +6,13 @@ if (!isset($user) && function_exists('current_user')) {
 $isAdminView = function_exists('is_admin') ? is_admin() : true;
 $active_nav = $active_nav ?? 'dashboard';
 $nav_active = function($key) use ($active_nav) { return $active_nav === $key ? ' active' : ''; };
+
+$adminPendingAttendanceRequests = 0;
+if ($isAdminView && !empty($conn)) {
+    try {
+        $adminPendingAttendanceRequests = (int)$conn->query("SELECT COUNT(*) FROM attendance_requests WHERE status = 'pending'")->fetchColumn();
+    } catch (Exception $e) {}
+}
 ?>
     <div id="wrapper">
         <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
@@ -43,7 +50,11 @@ $nav_active = function($key) use ($active_nav) { return $active_nav === $key ? '
             <li class="nav-item<?php echo $nav_active('attendance'); ?>">
                 <a class="nav-link" href="attendance.php">
                     <i class="fas fa-fw fa-clipboard-check"></i>
-                    <span>Attendance</span></a>
+                    <span>Attendance</span>
+                    <?php if (!empty($adminPendingAttendanceRequests) && $adminPendingAttendanceRequests > 0): ?>
+                    <span class="badge badge-warning text-dark ml-1 font-weight-bold" style="font-size:.68rem;padding:2px 5px;"><?php echo (int)$adminPendingAttendanceRequests; ?></span>
+                    <?php endif; ?>
+                </a>
             </li>
             <li class="nav-item<?php echo $nav_active('shifts'); ?>">
                 <a class="nav-link" href="shifts.php">
