@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/auth_check.php';
 require_once 'db_con.php';
+require_once 'includes/attendance_helper.php';
 require_login();
 
 if ($conn) {
@@ -173,11 +174,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isAdmin && $conn) {
                     $empR = $eS->fetch();
                     $rate = (float)($empR['hourly_rate'] ?? 0);
 
-                    // Attendance query enforcing 8-hour cap and summing approved OT
+                    // Attendance query using regular_hours (with 8h cap and undertime deduction) and summing approved OT
                     $pStmt = $conn->prepare("SELECT 
                         COUNT(DISTINCT attendance_date) AS days,
                         COALESCE(SUM(hours_worked), 0) AS raw_hours,
-                        COALESCE(SUM(LEAST(hours_worked, 8.00)), 0) AS regular_hours,
+                        COALESCE(SUM(COALESCE(regular_hours, LEAST(hours_worked, 8.00))), 0) AS regular_hours,
                         COALESCE(SUM(CASE WHEN is_ot_approved = 1 THEN ot_hours ELSE 0 END), 0) AS preapproved_ot_hours
                         FROM attendance WHERE employee_id = ? AND attendance_date BETWEEN ? AND ? AND hours_worked > 0");
                     $pStmt->execute([$empId, $cStart, $cEnd]);
@@ -340,7 +341,7 @@ if ($conn && $staffEmpId) {
 
         foreach ($currentMonthAttendance as $a) {
             $h = (float)($a['hours_worked'] ?? 0);
-            $regH = min($h, 8.0);
+            $regH = isset($a['regular_hours']) && $a['regular_hours'] !== null ? (float)$a['regular_hours'] : calculate_regular_hours($h);
             $otH = !empty($a['is_ot_approved']) ? (float)($a['ot_hours'] ?? 0) : 0;
             if ($h > 0) { $totalHoursMonth += ($regH + $otH); $daysPresent++; }
         }
@@ -354,7 +355,7 @@ if ($conn && $staffEmpId) {
             $pStmt = $conn->prepare("SELECT 
                 COUNT(DISTINCT attendance_date) AS days,
                 COALESCE(SUM(hours_worked), 0) AS raw_hours,
-                COALESCE(SUM(LEAST(hours_worked, 8.00)), 0) AS regular_hours,
+                COALESCE(SUM(COALESCE(regular_hours, LEAST(hours_worked, 8.00))), 0) AS regular_hours,
                 COALESCE(SUM(GREATEST(hours_worked - 8.00, 0)), 0) AS excess_hours,
                 COALESCE(SUM(CASE WHEN is_ot_approved = 1 THEN ot_hours ELSE 0 END), 0) AS preapproved_ot_hours
                 FROM attendance
@@ -431,11 +432,11 @@ if ($isAdmin && $conn) {
                 $eid = (int)$e['id'];
                 $rate = (float)($e['hourly_rate'] ?? 0);
 
-                // Query attendance with 8h regular cap and preapproved OT
+                // Query attendance with regular_hours (8h cap and undertime deduction) and preapproved OT
                 $pStmt = $conn->prepare("SELECT 
                     COUNT(DISTINCT attendance_date) AS days,
                     COALESCE(SUM(hours_worked), 0) AS raw_hours,
-                    COALESCE(SUM(LEAST(hours_worked, 8.00)), 0) AS regular_hours,
+                    COALESCE(SUM(COALESCE(regular_hours, LEAST(hours_worked, 8.00))), 0) AS regular_hours,
                     COALESCE(SUM(GREATEST(hours_worked - 8.00, 0)), 0) AS excess_hours,
                     COALESCE(SUM(CASE WHEN is_ot_approved = 1 THEN ot_hours ELSE 0 END), 0) AS preapproved_ot_hours
                     FROM attendance WHERE employee_id = ? AND attendance_date BETWEEN ? AND ? AND hours_worked > 0");

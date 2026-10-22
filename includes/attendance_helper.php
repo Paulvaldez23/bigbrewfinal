@@ -685,3 +685,49 @@ function calculate_hours_worked($time_in, $time_out) {
         return round($hours, 2);
     } catch (Throwable $e) { return null; }
 }
+
+/**
+ * Calculate payable regular hours based on Big Brew store policy:
+ * - Standard daily work is 8.00 hours (9-hour shift minus 1-hour unpaid lunch break).
+ * - Shortfall of 5 minutes or less (1 to 5 minutes): Grace period (0 deduction, counted as full 8.00 hours).
+ * - Shortfall of 6 to 30 minutes: Deducts 30 minutes (0.5 hr, or hourly rate / 2) -> 7.50 hours paid.
+ * - Shortfall of 31 to 60 minutes: Deducts 1.0 hour -> 7.00 hours paid.
+ * - Each 30-minute block beyond grace period deducts 0.5 hour.
+ */
+function calculate_regular_hours($hours_worked, $time_in = null, $time_out = null) {
+    if ($hours_worked === null || (float)$hours_worked <= 0) return 0.00;
+    $h = (float)$hours_worked;
+    if ($h >= 8.00) return 8.00;
+
+    $shortfall_mins = null;
+    if ($time_in && $time_out) {
+        try {
+            $in_dt = new DateTime($time_in);
+            $out_dt = new DateTime($time_out);
+            if ($out_dt < $in_dt) $out_dt->modify('+1 day');
+            $diff_sec = $out_dt->getTimestamp() - $in_dt->getTimestamp();
+            if ($diff_sec >= 18000) { // 5 hours or more -> deduct 1 hour (3600s) lunch
+                $diff_sec -= 3600;
+            }
+            $shortfall_sec = 28800 - $diff_sec; // 8 hours = 28800s
+            if ($shortfall_sec <= 0) return 8.00;
+            $shortfall_mins = $shortfall_sec / 60.0;
+        } catch (Throwable $e) {}
+    }
+
+    if ($shortfall_mins === null) {
+        $shortfall_mins = round((8.00 - $h) * 60, 2);
+    }
+
+    // 5 minutes or less short: Count as full 8.00 hours (5-minute grace period)
+    if ($shortfall_mins <= 5.0) {
+        return 8.00;
+    }
+
+    // 6 to 30 minutes short: deduct 30 minutes (0.5 hour) -> 7.50 hours
+    // Beyond 30 minutes: deduct by 30-minute blocks
+    $deduction_hours = ceil($shortfall_mins / 30.0) * 0.5;
+    $reg = max(0.00, 8.00 - $deduction_hours);
+    return round($reg, 2);
+}
+

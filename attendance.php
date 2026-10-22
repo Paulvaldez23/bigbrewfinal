@@ -128,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn) {
                 $finalIn = $reqIn ?: ($currAtt['time_in'] ?? null);
                 $finalOut = $reqOut ?: ($currAtt['time_out'] ?? null);
                 $finalHours = calculate_hours_worked($finalIn, $finalOut);
-                $finalReg = $finalHours !== null ? min((float)$finalHours, 8.0) : null;
+                $finalReg = calculate_regular_hours($finalHours);
                 $rem = !empty($currAtt['remarks']) ? $currAtt['remarks'] . ' • Logbook Verified' : 'Logbook Verified';
 
                 if ($currAtt) {
@@ -184,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn) {
             $curr = $currStmt->fetch();
             if ($curr) {
                 $finalHours = calculate_hours_worked($tin, $tout);
-                $finalReg = $finalHours !== null ? min((float)$finalHours, 8.0) : null;
+                $finalReg = calculate_regular_hours($finalHours);
                 $rem = !empty($curr['remarks']) ? $curr['remarks'] : 'Admin Logbook Entry';
 
                 $upd = $conn->prepare("UPDATE attendance SET time_in = ?, time_out = ?, hours_worked = ?, regular_hours = ?, source = 'logbook', remarks = ? WHERE id = ?");
@@ -261,13 +261,13 @@ $extra_js = [
     'assets/vendor/datatables/dataTables.bootstrap4.min.js'
 ];
 $colDefs = $isAdmin
-    ? "columnDefs:[{width:'120px',targets:0},{width:'180px',targets:1},{width:'125px',targets:2},{width:'125px',targets:3},{width:'150px',targets:4},{width:'90px',targets:5},{width:'95px',targets:6},{width:'220px',targets:7}]"
-    : "columnDefs:[{width:'130px',targets:0},{width:'125px',targets:1},{width:'125px',targets:2},{width:'135px',targets:3},{width:'95px',targets:4},{width:'90px',targets:5},{width:'220px',targets:6}]";
+    ? "columnDefs:[{width:'110px',targets:0},{width:'150px',targets:1},{width:'95px',targets:2},{width:'95px',targets:3},{width:'100px',targets:4},{width:'140px',targets:5},{width:'120px',targets:6},{width:'80px',targets:7},{width:'85px',targets:8},{width:'140px',targets:9}]"
+    : "columnDefs:[{width:'120px',targets:0},{width:'95px',targets:1},{width:'95px',targets:2},{width:'100px',targets:3},{width:'135px',targets:4},{width:'120px',targets:5},{width:'80px',targets:6},{width:'85px',targets:7},{width:'170px',targets:8}]";
 $orderCol = 0;
 $extra_script = "$(function(){ if (typeof $.fn.DataTable === 'function') { try { $('#dataTable').DataTable({order:[[$orderCol,'asc']],scrollX:true,autoWidth:false,pageLength:25,$colDefs}); } catch(e) {} } });";
 
 $attendance = [];
-$summary = ['present' => 0, 'late' => 0, 'absent' => 0, 'total_hours' => 0, 'days_with_records' => 0, 'total_days_in_week' => 7, 'total_emp_days' => 0, 'records' => 0];
+$summary = ['present' => 0, 'late' => 0, 'absent' => 0, 'total_hours' => 0, 'total_pay' => 0.0, 'days_with_records' => 0, 'total_days_in_week' => 7, 'total_emp_days' => 0, 'records' => 0];
 $weekBadge = '';
 if ($isThisWeek) $weekBadge = '<span class="badge badge-success ml-2"><i class="fas fa-star mr-1"></i>Current Week</span>';
 elseif ($isPastWeek) $weekBadge = '<span class="badge badge-secondary ml-2"><i class="fas fa-archive mr-1"></i>Archived Week</span>';
@@ -280,7 +280,7 @@ if ($conn) {
     try {
         $params = [$weekStartStr, $weekEndStr];
         if ($isAdmin) {
-            $sql = "SELECT a.*, e.employee_id as emp_code, e.first_name, e.last_name
+            $sql = "SELECT a.*, e.employee_id as emp_code, e.first_name, e.last_name, COALESCE(e.hourly_rate, 0) as hourly_rate
                 FROM attendance a
                 LEFT JOIN employees e ON a.employee_id = e.id
                 WHERE a.attendance_date BETWEEN ? AND ?
@@ -304,8 +304,9 @@ if ($conn) {
                 ORDER BY ar.attendance_date DESC, ar.created_at ASC");
             $pendingRequests = $pReqStmt->fetchAll() ?: [];
         } elseif ($staffEmpId) {
-            $sql = "SELECT a.*
+            $sql = "SELECT a.*, COALESCE(e.hourly_rate, 0) as hourly_rate
                 FROM attendance a
+                LEFT JOIN employees e ON a.employee_id = e.id
                 WHERE a.employee_id = ? AND a.attendance_date BETWEEN ? AND ?
                 ORDER BY a.attendance_date ASC, a.id ASC";
             $stmt = $conn->prepare($sql);
@@ -338,9 +339,14 @@ if ($attendance) {
         else $summary['present']++;
 
         $raw = (float)($a['hours_worked'] ?? 0);
-        $reg = min($raw, 8.0);
+        $reg = isset($a['regular_hours']) && $a['regular_hours'] !== null ? (float)$a['regular_hours'] : calculate_regular_hours($raw, $a['time_in'] ?? null, $a['time_out'] ?? null);
         $ot = !empty($a['is_ot_approved']) ? (float)($a['ot_hours'] ?? 0) : 0;
-        $summary['total_hours'] += ($reg + $ot);
+        $paidH = $reg + $ot;
+        $rate = (float)($a['hourly_rate'] ?? 0);
+        $dayPay = ($a['time_in'] && $a['time_out'] && $raw > 0) ? round($paidH * $rate, 2) : 0.00;
+
+        $summary['total_hours'] += $paidH;
+        $summary['total_pay'] += $dayPay;
 
         $key = ($a['employee_id'] ?? '0') . '|' . ($a['attendance_date'] ?? '');
         if (!isset($seenKeys[$key])) {
@@ -533,7 +539,7 @@ require 'includes/layoutSidenav_nav.php';
 
     <!-- Weekly Summary Cards -->
     <div class="row mb-4">
-        <div class="col-xl-3 col-md-6 mb-3">
+        <div class="col-xl col-md-4 col-sm-6 mb-3">
             <div class="card border-left-success shadow-sm h-100 py-2">
                 <div class="card-body">
                     <div class="row no-gutters align-items-center">
@@ -546,7 +552,7 @@ require 'includes/layoutSidenav_nav.php';
                 </div>
             </div>
         </div>
-        <div class="col-xl-3 col-md-6 mb-3">
+        <div class="col-xl col-md-4 col-sm-6 mb-3">
             <div class="card border-left-warning shadow-sm h-100 py-2">
                 <div class="card-body">
                     <div class="row no-gutters align-items-center">
@@ -559,7 +565,7 @@ require 'includes/layoutSidenav_nav.php';
                 </div>
             </div>
         </div>
-        <div class="col-xl-3 col-md-6 mb-3">
+        <div class="col-xl col-md-4 col-sm-6 mb-3">
             <div class="card border-left-danger shadow-sm h-100 py-2">
                 <div class="card-body">
                     <div class="row no-gutters align-items-center">
@@ -572,16 +578,30 @@ require 'includes/layoutSidenav_nav.php';
                 </div>
             </div>
         </div>
-        <div class="col-xl-3 col-md-6 mb-3">
+        <div class="col-xl col-md-6 col-sm-6 mb-3">
             <div class="card border-left-info shadow-sm h-100 py-2">
                 <div class="card-body">
                     <div class="row no-gutters align-items-center">
                         <div class="col mr-2">
-                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Total Payable Hours</div>
+                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Total Hours</div>
                             <div class="h4 mb-0 font-weight-bold text-gray-800"><?php echo number_format((float)$summary['total_hours'], 2); ?><span class="text-sm font-weight-normal text-gray-500 ml-1">hrs</span></div>
                             <div class="text-xs text-muted">8h/day max + approved OT</div>
                         </div>
                         <div class="col-auto"><i class="fas fa-hourglass-half fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl col-md-6 col-sm-12 mb-3">
+            <div class="card border-left-primary shadow-sm h-100 py-2 bg-gradient-light">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Est. Pay (Kabuuan)</div>
+                            <div class="h4 mb-0 font-weight-bold text-success">₱ <?php echo number_format((float)$summary['total_pay'], 2); ?></div>
+                            <div class="text-xs text-muted">Weekly gross pay across staff</div>
+                        </div>
+                        <div class="col-auto"><i class="fas fa-coins fa-2x text-primary"></i></div>
                     </div>
                 </div>
             </div>
@@ -608,16 +628,31 @@ require 'includes/layoutSidenav_nav.php';
         <div class="card-body">
             <div class="table-responsive">
                 <?php if ($isAdmin): ?>
-                <table class="table table-bordered text-nowrap" id="dataTable" width="100%" cellspacing="0" style="min-width:1120px;">
-                    <thead><tr><th>Date</th><th>Employee</th><th>Time In</th><th>Time Out</th><th>Payable Hours / OT</th><th>Status</th><th>Source</th><th>Remarks / Actions</th></tr></thead>
+                <table class="table table-bordered text-nowrap" id="dataTable" width="100%" cellspacing="0" style="min-width:1180px;">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Employee</th>
+                            <th>Time In</th>
+                            <th>Time Out</th>
+                            <th>Hourly Rate</th>
+                            <th>Payable Hours / OT</th>
+                            <th>Total Pay (Sahod)</th>
+                            <th>Status</th>
+                            <th>Source</th>
+                            <th>Remarks / Actions</th>
+                        </tr>
+                    </thead>
                     <tbody>
                         <?php foreach ($attendance as $a):
                             $rawH = (float)($a['hours_worked'] ?? 0);
-                            $regH = min($rawH, 8.0);
+                            $regH = isset($a['regular_hours']) && $a['regular_hours'] !== null ? (float)$a['regular_hours'] : calculate_regular_hours($rawH, $a['time_in'] ?? null, $a['time_out'] ?? null);
                             $excessH = max(0, round($rawH - 8.0, 2));
                             $otH = (float)($a['ot_hours'] ?? 0);
                             $isApp = !empty($a['is_ot_approved']);
                             $paidH = $regH + ($isApp ? $otH : 0);
+                            $rate = (float)($a['hourly_rate'] ?? 0);
+                            $dayPay = ($a['time_in'] && $a['time_out'] && $rawH > 0) ? round($paidH * $rate, 2) : 0.00;
                             $isToday = (new DateTime($a['attendance_date']))->format('Y-m-d') === $todayObj->format('Y-m-d');
                         ?>
                         <tr class="<?php echo $isToday ? 'table-info' : ''; ?>">
@@ -637,6 +672,18 @@ require 'includes/layoutSidenav_nav.php';
                                     <span class="text-danger font-weight-bold"><i class="fas fa-exclamation-circle mr-1"></i>Missing Out</span>
                                 <?php endif; ?>
                             </td>
+
+                            <!-- Hourly Rate Column -->
+                            <td class="text-nowrap">
+                                <?php if ($rate > 0): ?>
+                                    <strong class="text-gray-800">₱ <?php echo number_format($rate, 2); ?></strong><span class="text-xs text-muted">/hr</span>
+                                <?php else: ?>
+                                    <a href="employees.php" class="badge badge-light border text-warning" title="No rate set. Click to update in Employee Management.">
+                                        <i class="fas fa-edit mr-1"></i>₱ 0.00/hr
+                                    </a>
+                                <?php endif; ?>
+                            </td>
+
                             <td class="text-nowrap">
                                 <strong><?php echo ($a['time_in'] && $a['time_out'] && $rawH > 0) ? number_format($paidH, 2) . ' hrs' : '-'; ?></strong>
                                 <?php if ($rawH > 8.0): ?>
@@ -659,6 +706,34 @@ require 'includes/layoutSidenav_nav.php';
                                         data-approved="<?php echo $isApp ? '1' : '0'; ?>">
                                         <i class="fas fa-clock mr-1"></i><?php echo $isApp ? 'Edit OT' : 'Set OT'; ?>
                                     </button>
+                                <?php elseif ($rawH > 0 && $rawH < 8.0 && $regH >= 8.0): ?>
+                                    <div class="text-xs text-muted mt-1">
+                                        8.00h reg
+                                        <span class="badge badge-success px-1" title="Kulang ng <?php echo round((8.0 - $rawH) * 60); ?>m pero pasok sa 5-min grace period (counted as full 8 hours)">
+                                            <i class="fas fa-check mr-1"></i>Grace period (8h)
+                                        </span>
+                                    </div>
+                                <?php elseif ($rawH > 0 && $regH < 8.0): ?>
+                                    <div class="text-xs text-muted mt-1">
+                                        <?php echo number_format($regH, 2); ?>h reg
+                                        <span class="badge badge-warning text-dark px-1" title="<?php echo round((8.0 - $rawH) * 60); ?>m short from 8h (Deducted <?php echo round((8.0 - $regH) * 60); ?>m per policy)">
+                                            <i class="fas fa-minus mr-1"></i><?php echo round(8.0 - $regH, 2); ?>h undertime
+                                        </span>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
+
+                            <!-- Total Pay (Sahod) Column -->
+                            <td class="text-nowrap">
+                                <?php if ($a['time_in'] && $a['time_out'] && $rawH > 0): ?>
+                                    <strong class="text-success font-weight-bold">₱ <?php echo number_format($dayPay, 2); ?></strong>
+                                    <?php if ($rate > 0): ?>
+                                        <div class="text-xs text-muted"><?php echo number_format($paidH, 2); ?>h × ₱<?php echo number_format($rate, 2); ?></div>
+                                    <?php else: ?>
+                                        <div class="text-xs text-muted font-italic">(Rate: ₱0.00)</div>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
                                 <?php endif; ?>
                             </td>
                             <td class="text-nowrap"><span class="badge badge-<?php echo strpos(strtolower($a['status'] ?? ''),'late')!==false?'warning':($a['status']==='absent'?'danger':'success'); ?>"><?php echo ucfirst($a['status'] ?? 'present'); ?></span></td>
@@ -684,20 +759,44 @@ require 'includes/layoutSidenav_nav.php';
                         </tr>
                         <?php endforeach; ?>
                         <?php if (!$attendance): ?>
-                        <tr><td colspan="8" class="text-center text-gray-500 py-5"><i class="fas fa-inbox fa-2x mb-2 d-block text-gray-300"></i>No attendance records for this week. Upload a CSV/XLSX file or wait for staff to punch in.</td></tr>
+                        <tr><td colspan="10" class="text-center text-gray-500 py-5"><i class="fas fa-inbox fa-2x mb-2 d-block text-gray-300"></i>No attendance records for this week. Upload a CSV/XLSX file or wait for staff to punch in.</td></tr>
                         <?php endif; ?>
                     </tbody>
+                    <?php if ($attendance): ?>
+                    <tfoot>
+                        <tr class="bg-light font-weight-bold text-gray-800">
+                            <td colspan="5" class="text-right text-uppercase small"><i class="fas fa-calculator mr-1"></i>Weekly Total (Kabuuan):</td>
+                            <td class="text-primary text-nowrap"><?php echo number_format((float)$summary['total_hours'], 2); ?> hrs</td>
+                            <td class="text-success text-nowrap h6 mb-0 font-weight-bold">₱ <?php echo number_format((float)$summary['total_pay'], 2); ?></td>
+                            <td colspan="3" class="text-muted small"><?php echo count($attendance); ?> records this week</td>
+                        </tr>
+                    </tfoot>
+                    <?php endif; ?>
                 </table>
                 <?php else: ?>
                 <!-- STAFF VIEW -->
-                <table class="table table-bordered text-nowrap" id="dataTable" width="100%" cellspacing="0" style="min-width:880px;">
-                    <thead><tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Payable Hours</th><th>Status</th><th>Source</th><th>Remarks / Requests</th></tr></thead>
+                <table class="table table-bordered text-nowrap" id="dataTable" width="100%" cellspacing="0" style="min-width:980px;">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Time In</th>
+                            <th>Time Out</th>
+                            <th>Hourly Rate</th>
+                            <th>Payable Hours</th>
+                            <th>Total Pay (Sahod)</th>
+                            <th>Status</th>
+                            <th>Source</th>
+                            <th>Remarks / Requests</th>
+                        </tr>
+                    </thead>
                     <tbody>
                         <?php foreach ($attendance as $a):
                             $rawH = (float)($a['hours_worked'] ?? 0);
-                            $regH = min($rawH, 8.0);
+                            $regH = isset($a['regular_hours']) && $a['regular_hours'] !== null ? (float)$a['regular_hours'] : calculate_regular_hours($rawH, $a['time_in'] ?? null, $a['time_out'] ?? null);
                             $otH = !empty($a['is_ot_approved']) ? (float)($a['ot_hours'] ?? 0) : 0;
                             $paidH = $regH + $otH;
+                            $rate = (float)($a['hourly_rate'] ?? 0);
+                            $dayPay = ($a['time_in'] && $a['time_out'] && $rawH > 0) ? round($paidH * $rate, 2) : 0.00;
                             $isToday = (new DateTime($a['attendance_date']))->format('Y-m-d') === $todayObj->format('Y-m-d');
 
                             // Check if staff has a pending request for this row
@@ -748,6 +847,11 @@ require 'includes/layoutSidenav_nav.php';
                                 <?php endif; ?>
                             </td>
 
+                            <!-- Hourly Rate Column -->
+                            <td class="text-nowrap">
+                                <strong>₱ <?php echo number_format($rate, 2); ?></strong><span class="text-xs text-muted">/hr</span>
+                            </td>
+
                             <!-- Payable Hours Column -->
                             <td class="text-nowrap">
                                 <?php if ($a['time_in'] && $a['time_out'] && $rawH > 0): ?>
@@ -756,9 +860,25 @@ require 'includes/layoutSidenav_nav.php';
                                         <div class="text-xs text-success font-weight-bold mt-1">(Includes <?php echo number_format($otH, 2); ?>h approved OT)</div>
                                     <?php elseif ($rawH > 8.0): ?>
                                         <div class="text-xs text-muted mt-1">(8.00h reg, OT pending approval)</div>
+                                    <?php elseif ($rawH > 0 && $rawH < 8.0 && $regH >= 8.0): ?>
+                                        <div class="text-xs text-success font-weight-bold mt-1">(8.00h reg • 5-min grace period)</div>
+                                    <?php elseif ($regH < 8.0): ?>
+                                        <div class="text-xs text-warning font-weight-bold mt-1">(<?php echo number_format($regH, 2); ?>h reg, -<?php echo round(8.0 - $regH, 2); ?>h undertime)</div>
                                     <?php endif; ?>
                                 <?php elseif ($pendingReq): ?>
                                     <span class="badge badge-light border text-warning"><i class="fas fa-hourglass-start mr-1"></i>Awaiting Approval</span>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
+                                <?php endif; ?>
+                            </td>
+
+                            <!-- Total Pay Column -->
+                            <td class="text-nowrap">
+                                <?php if ($a['time_in'] && $a['time_out'] && $rawH > 0): ?>
+                                    <strong class="text-success font-weight-bold">₱ <?php echo number_format($dayPay, 2); ?></strong>
+                                    <?php if ($rate > 0): ?>
+                                        <div class="text-xs text-muted"><?php echo number_format($paidH, 2); ?>h × ₱<?php echo number_format($rate, 2); ?></div>
+                                    <?php endif; ?>
                                 <?php else: ?>
                                     <span class="text-muted">-</span>
                                 <?php endif; ?>
@@ -780,9 +900,19 @@ require 'includes/layoutSidenav_nav.php';
                         </tr>
                         <?php endforeach; ?>
                         <?php if (!$attendance): ?>
-                        <tr><td colspan="7" class="text-center text-gray-500 py-5"><i class="fas fa-inbox fa-2x mb-2 d-block text-gray-300"></i>No attendance records for this week. Check back later or contact your admin.</td></tr>
+                        <tr><td colspan="9" class="text-center text-gray-500 py-5"><i class="fas fa-inbox fa-2x mb-2 d-block text-gray-300"></i>No attendance records for this week. Check back later or contact your admin.</td></tr>
                         <?php endif; ?>
                     </tbody>
+                    <?php if ($attendance): ?>
+                    <tfoot>
+                        <tr class="bg-light font-weight-bold text-gray-800">
+                            <td colspan="4" class="text-right text-uppercase small"><i class="fas fa-calculator mr-1"></i>My Weekly Total (Kabuuan):</td>
+                            <td class="text-primary text-nowrap"><?php echo number_format((float)$summary['total_hours'], 2); ?> hrs</td>
+                            <td class="text-success text-nowrap h6 mb-0 font-weight-bold">₱ <?php echo number_format((float)$summary['total_pay'], 2); ?></td>
+                            <td colspan="3" class="text-muted small"></td>
+                        </tr>
+                    </tfoot>
+                    <?php endif; ?>
                 </table>
                 <?php endif; ?>
             </div>
